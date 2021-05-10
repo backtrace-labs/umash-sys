@@ -1,6 +1,6 @@
 [package]
 name = "umash-sys"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Backtrace I/O <team@backtrace.io>"]
 license = "MIT"
 description = "FFI wrappers for the umash hash/fingerprint function"
