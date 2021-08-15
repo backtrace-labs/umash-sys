@@ -5,6 +5,7 @@ fn main() {
     cc::Build::new()
         .file("src/umash.c")
         .opt_level(2)
-        .flag("-mpclmul")
+        .flag_if_supported("-mpclmul")
+        .flag_if_supported("-march=armv8-a+crypto")
         .compile("umash")
 }
