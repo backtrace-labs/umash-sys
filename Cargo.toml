@@ -1,6 +1,6 @@
 [package]
 name = "umash-sys"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Backtrace I/O <team@backtrace.io>"]
 license = "MIT"
 description = "FFI wrappers for the umash hash/fingerprint function"
@@ -10,5 +10,5 @@ repository = "https://github.com/backtrace-labs/umash-sys"
 edition = "2018"
 
 [build-dependencies]
-cc = "1.0"
+cc = "1"
 
