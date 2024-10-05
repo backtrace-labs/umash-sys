@@ -1,5 +1,6 @@
 fn main() {
     println!("cargo:rerun-if-changed=src/umash.c");
+    println!("cargo:rerun-if-changed=src/umash_long.inc");
     println!("cargo:rerun-if-changed=src/umash.h");
 
     cc::Build::new()
