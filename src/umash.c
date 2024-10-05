@@ -1,7 +1,98 @@
 #include "umash.h"
 
+/*
+ * UMASH is distributed under the MIT license.
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * Copyright 2020-2022 Backtrace I/O, Inc.
+ * Copyright 2022 Paul Khuong
+ * Copyright 2022 Dougall Johnson
+ *
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use, copy,
+ * modify, merge, publish, distribute, sublicense, and/or sell copies
+ * of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
 #if !defined(UMASH_TEST_ONLY) && !defined(NDEBUG)
 #define NDEBUG
+#endif
+
+/**
+ * -DUMASH_LONG_INPUTS=0 to disable the routine specialised for long
+ * inputs, and -DUMASH_LONG_INPUTS=1 to enable it.  If the variable
+ * isn't defined, we try to probe for `umash_long.inc`: that's where
+ * the long input routines are defined.
+ */
+#ifndef UMASH_LONG_INPUTS
+#ifdef __has_include
+#if __has_include("umash_long.inc")
+#define UMASH_LONG_INPUTS 1
+#endif /* __has_include() */
+#endif /* __has_include */
+
+#ifndef UMASH_LONG_INPUTS
+#define UMASH_LONG_INPUTS 0
+#endif /* !UMASH_LONG_INPUTS */
+#endif /* !UMASH_LONG_INPUTS */
+
+/*
+ * Default to dynamically dispatching implementations on x86-64
+ * (there's nothing to dispatch on aarch64).
+ */
+#ifndef UMASH_DYNAMIC_DISPATCH
+#ifdef __x86_64__
+#define UMASH_DYNAMIC_DISPATCH 1
+#else
+#define UMASH_DYNAMIC_DISPATCH 0
+#endif
+#endif
+
+/*
+ * Enable inline assembly by default when building with recent GCC or
+ * compatible compilers.  It should always be safe to disable this
+ * option, although there may be a performance cost.
+ */
+#ifndef UMASH_INLINE_ASM
+
+#if defined(__clang__)
+/*
+ * We need clang 8+ for output flags, and 10+ for relaxed vector
+ * constraints.
+ */
+#if __clang_major__ >= 10
+#define UMASH_INLINE_ASM 1
+#else
+#define UMASH_INLINE_ASM 0
+#endif /* __clang_major__ */
+
+#elif defined(__GNUC__)
+#if __GNUC__ >= 6
+#define UMASH_INLINE_ASM 1
+#else
+#define UMASH_INLINE_ASM 0
+#endif /* __GNUC__ */
+
+#else
+#define UMASH_INLINE_ASM 0
+#endif
+
 #endif
 
 #include <assert.h>
@@ -72,7 +163,13 @@ v128_clmul(uint64_t x, uint64_t y)
 static inline v128
 v128_clmul_cross(v128 x)
 {
-	return v128_clmul(vgetq_lane_u64(x, 0), vgetq_lane_u64(x, 1));
+	v128 swapped = vextq_u64(x, x, 1);
+#if UMASH_INLINE_ASM
+	/* Keep the result out of GPRs. */
+	__asm__("" : "+w"(swapped));
+#endif
+
+	return v128_clmul(vgetq_lane_u64(x, 0), vgetq_lane_u64(swapped, 0));
 }
 
 #else
@@ -107,34 +204,6 @@ v128_clmul_cross(v128 x)
 #endif
 
 /*
- * UMASH is distributed under the MIT license.
- *
- * SPDX-License-Identifier: MIT
- *
- * Copyright 2020 Backtrace I/O, Inc.
- *
- * Permission is hereby granted, free of charge, to any person
- * obtaining a copy of this software and associated documentation
- * files (the "Software"), to deal in the Software without
- * restriction, including without limitation the rights to use, copy,
- * modify, merge, publish, distribute, sublicense, and/or sell copies
- * of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be
- * included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
-
-/*
  * Defining UMASH_TEST_ONLY switches to a debug build with internal
  * symbols exposed.
  */
@@ -148,9 +217,13 @@ v128_clmul_cross(v128 x)
 #ifdef __GNUC__
 #define LIKELY(X) __builtin_expect(!!(X), 1)
 #define UNLIKELY(X) __builtin_expect(!!(X), 0)
+#define HOT __attribute__((__hot__))
+#define COLD __attribute__((__cold__))
 #else
 #define LIKELY(X) X
 #define UNLIKELY(X) X
+#define HOT
+#define COLD
 #endif
 
 #define ARRAY_SIZE(ARR) (sizeof(ARR) / sizeof(ARR[0]))
@@ -173,6 +246,31 @@ v128_clmul_cross(v128 x)
  * The code below uses GCC extensions.  It should be possible to add
  * support for other compilers.
  */
+
+#if !defined(__x86_64__) || !UMASH_INLINE_ASM
+static inline void
+mul128(uint64_t x, uint64_t y, uint64_t *hi, uint64_t *lo)
+{
+	__uint128_t product = x;
+
+	product *= y;
+	*hi = product >> 64;
+	*lo = product;
+	return;
+}
+#else
+static inline void
+mul128(uint64_t x, uint64_t y, uint64_t *hi, uint64_t *lo)
+{
+	uint64_t mulhi, mullo;
+
+	__asm__("mul %3" : "=a"(mullo), "=d"(mulhi) : "%a"(x), "r"(y) : "cc");
+	*hi = mulhi;
+	*lo = mullo;
+	return;
+}
+#endif
+
 TEST_DEF inline uint64_t
 add_mod_fast(uint64_t x, uint64_t y)
 {
@@ -182,7 +280,7 @@ add_mod_fast(uint64_t x, uint64_t y)
 	return (__builtin_uaddll_overflow(x, y, &sum) ? sum + 8 : sum);
 }
 
-static FN uint64_t
+static FN COLD uint64_t
 add_mod_slow_slow_path(uint64_t sum, uint64_t fixup)
 {
 	/* Reduce sum, mod 2**64 - 8. */
@@ -215,16 +313,24 @@ add_mod_slow(uint64_t x, uint64_t y)
 	if (LIKELY(sum < (uint64_t)-16))
 		return sum + fixup;
 
+#ifdef UMASH_INLINE_ASM
+	/*
+	 * Some compilers like to compile the likely branch above with
+	 * conditional moves or predication.  Insert a compiler barrier
+	 * in the slow path here to force a branch.
+	 */
+	__asm__("" : "+r"(sum));
+#endif
 	return add_mod_slow_slow_path(sum, fixup);
 }
 
 TEST_DEF inline uint64_t
 mul_mod_fast(uint64_t m, uint64_t x)
 {
-	__uint128_t product = m;
+	uint64_t hi, lo;
 
-	product *= x;
-	return add_mod_fast((uint64_t)product, 8 * (uint64_t)(product >> 64));
+	mul128(m, x, &hi, &lo);
+	return add_mod_fast(lo, 8 * hi);
 }
 
 TEST_DEF inline uint64_t
@@ -411,127 +517,15 @@ salsa20_stream(
 	return;
 }
 
+#if defined(UMASH_TEST_ONLY) || UMASH_LONG_INPUTS
+#include "umash_long.inc"
+#endif
+
 /**
  * OH block compression.
  */
 TEST_DEF struct umash_oh
-oh_one_block(const uint64_t *params, uint64_t tag, const void *block)
-{
-	struct umash_oh ret;
-	v128 acc = V128_ZERO;
-	size_t i;
-
-	for (i = 0; i < UMASH_OH_PARAM_COUNT - 2; i += 2) {
-		v128 x, k;
-
-		memcpy(&x, block, sizeof(x));
-		block = (const char *)block + sizeof(x);
-
-		memcpy(&k, &params[i], sizeof(k));
-		x ^= k;
-		acc ^= v128_clmul_cross(x);
-	}
-
-	memcpy(&ret, &acc, sizeof(ret));
-
-	/* Final `ENH` iteration */
-	{
-		__uint128_t enh = (__uint128_t)tag << 64;
-		uint64_t x, y;
-
-		memcpy(&x, block, sizeof(x));
-		block = (const char *)block + sizeof(x);
-		memcpy(&y, block, sizeof(y));
-		x += params[i];
-		y += params[i + 1];
-		enh += (__uint128_t)x * y;
-
-		ret.bits[0] ^= (uint64_t)enh;
-		ret.bits[1] ^= (uint64_t)(enh >> 64) ^ (uint64_t)enh;
-	}
-
-	return ret;
-}
-
-TEST_DEF void
-oh_one_block_fprint(struct umash_oh dst[static 2], const uint64_t *restrict params,
-    uint64_t tag, const void *restrict block)
-{
-	v128 acc = V128_ZERO; /* Base umash */
-	v128 acc_shifted = V128_ZERO; /* Accumulates shifted values */
-	v128 lrc;
-	v128 prev = V128_ZERO;
-	size_t i;
-
-	lrc = v128_create(params[UMASH_OH_PARAM_COUNT], params[UMASH_OH_PARAM_COUNT + 1]);
-	for (i = 0; i < UMASH_OH_PARAM_COUNT - 2; i += 2) {
-		v128 x, k;
-
-		memcpy(&x, block, sizeof(x));
-		block = (const char *)block + sizeof(x);
-
-		memcpy(&k, &params[i], sizeof(k));
-
-		x ^= k;
-		lrc ^= x;
-
-		x = v128_clmul_cross(x);
-
-		acc ^= x;
-
-		acc_shifted ^= prev;
-		acc_shifted = v128_shift(acc_shifted);
-
-		prev = x;
-	}
-
-	/*
-	 * Update the LRC for the last chunk before treating it
-	 * specially.
-	 */
-	{
-		v128 x, k;
-
-		memcpy(&x, block, sizeof(x));
-		memcpy(&k, &params[i], sizeof(k));
-
-		lrc ^= x ^ k;
-	}
-
-	acc_shifted ^= acc;
-	acc_shifted = v128_shift(acc_shifted);
-
-	acc_shifted ^= v128_clmul_cross(lrc);
-
-	memcpy(&dst[0], &acc, sizeof(dst[0]));
-	memcpy(&dst[1], &acc_shifted, sizeof(dst[0]));
-
-	{
-		__uint128_t enh;
-		uint64_t x, y, kx, ky;
-
-		memcpy(&x, block, sizeof(x));
-		block = (const char *)block + sizeof(x);
-		memcpy(&y, block, sizeof(y));
-
-		enh = (__uint128_t)tag << 64;
-		kx = x + params[i];
-		ky = y + params[i + 1];
-		enh += (__uint128_t)kx * ky;
-
-		enh ^= enh << 64;
-		dst[0].bits[0] ^= (uint64_t)enh;
-		dst[0].bits[1] ^= (uint64_t)(enh >> 64);
-
-		dst[1].bits[0] ^= (uint64_t)enh;
-		dst[1].bits[1] ^= (uint64_t)(enh >> 64);
-	}
-
-	return;
-}
-
-TEST_DEF struct umash_oh
-oh_last_block(const uint64_t *params, uint64_t tag, const void *block, size_t n_bytes)
+oh_varblock(const uint64_t *params, uint64_t tag, const void *block, size_t n_bytes)
 {
 	struct umash_oh ret;
 	v128 acc = V128_ZERO;
@@ -557,8 +551,7 @@ oh_last_block(const uint64_t *params, uint64_t tag, const void *block, size_t n_
 
 	/* Compress the final (potentially partial) pair. */
 	{
-		__uint128_t enh = (__uint128_t)tag << 64;
-		uint64_t x, y;
+		uint64_t x, y, enh_hi, enh_lo;
 
 		memcpy(&x, last_ptr, sizeof(x));
 		last_ptr = (const char *)last_ptr + sizeof(x);
@@ -566,23 +559,24 @@ oh_last_block(const uint64_t *params, uint64_t tag, const void *block, size_t n_
 
 		x += params[i];
 		y += params[i + 1];
-		enh += (__uint128_t)x * y;
+		mul128(x, y, &enh_hi, &enh_lo);
+		enh_hi += tag;
 
-		ret.bits[0] ^= (uint64_t)enh;
-		ret.bits[1] ^= (uint64_t)(enh >> 64) ^ (uint64_t)enh;
+		ret.bits[0] ^= enh_lo;
+		ret.bits[1] ^= enh_hi ^ enh_lo;
 	}
 
 	return ret;
 }
 
 TEST_DEF void
-oh_last_block_fprint(struct umash_oh dst[static 2], const uint64_t *restrict params,
-    uint64_t tag, const void *restrict block, size_t n_bytes)
+oh_varblock_fprint(struct umash_oh dst[static restrict 2],
+    const uint64_t *restrict params, uint64_t tag, const void *restrict block,
+    size_t n_bytes)
 {
 	v128 acc = V128_ZERO; /* Base umash */
 	v128 acc_shifted = V128_ZERO; /* Accumulates shifted values */
 	v128 lrc;
-	v128 prev = V128_ZERO;
 	/* The final block processes `remaining > 0` bytes. */
 	size_t remaining = 1 + ((n_bytes - 1) % sizeof(v128));
 	size_t end_full_pairs = (n_bytes - remaining) / sizeof(uint64_t);
@@ -604,11 +598,11 @@ oh_last_block_fprint(struct umash_oh dst[static 2], const uint64_t *restrict par
 		x = v128_clmul_cross(x);
 
 		acc ^= x;
+		if (i + 2 >= end_full_pairs)
+			break;
 
-		acc_shifted ^= prev;
+		acc_shifted ^= x;
 		acc_shifted = v128_shift(acc_shifted);
-
-		prev = x;
 	}
 
 	/*
@@ -630,27 +624,27 @@ oh_last_block_fprint(struct umash_oh dst[static 2], const uint64_t *restrict par
 	acc_shifted ^= v128_clmul_cross(lrc);
 
 	memcpy(&dst[0], &acc, sizeof(dst[0]));
-	memcpy(&dst[1], &acc_shifted, sizeof(dst[0]));
+	memcpy(&dst[1], &acc_shifted, sizeof(dst[1]));
 
 	{
-		__uint128_t enh;
-		uint64_t x, y, kx, ky;
+		uint64_t x, y, kx, ky, enh_hi, enh_lo;
 
 		memcpy(&x, last_ptr, sizeof(x));
 		last_ptr = (const char *)last_ptr + sizeof(x);
 		memcpy(&y, last_ptr, sizeof(y));
 
-		enh = (__uint128_t)tag << 64;
 		kx = x + params[end_full_pairs];
 		ky = y + params[end_full_pairs + 1];
-		enh += (__uint128_t)kx * ky;
 
-		enh ^= enh << 64;
-		dst[0].bits[0] ^= (uint64_t)enh;
-		dst[0].bits[1] ^= (uint64_t)(enh >> 64);
+		mul128(kx, ky, &enh_hi, &enh_lo);
+		enh_hi += tag;
 
-		dst[1].bits[0] ^= (uint64_t)enh;
-		dst[1].bits[1] ^= (uint64_t)(enh >> 64);
+		enh_hi ^= enh_lo;
+		dst[0].bits[0] ^= enh_lo;
+		dst[0].bits[1] ^= enh_hi;
+
+		dst[1].bits[0] ^= enh_lo;
+		dst[1].bits[1] ^= enh_hi;
 	}
 
 	return;
@@ -666,14 +660,14 @@ select_ptr(bool cond, const void *then, const void *otherwise)
 {
 	const char *ret;
 
-#ifdef __GNUC__
+#if UMASH_INLINE_ASM
 	/* Force strict evaluation of both arguments. */
 	__asm__("" ::"r"(then), "r"(otherwise));
 #endif
 
 	ret = (cond) ? then : otherwise;
 
-#ifdef __GNUC__
+#if UMASH_INLINE_ASM
 	/* And also force the result to be materialised with a blackhole. */
 	__asm__("" : "+r"(ret));
 #endif
@@ -793,10 +787,7 @@ TEST_DEF uint64_t
 umash_medium(const uint64_t multipliers[static 2], const uint64_t *oh, uint64_t seed,
     const void *data, size_t n_bytes)
 {
-	union {
-		__uint128_t h;
-		uint64_t u64[2];
-	} acc = { .h = (__uint128_t)(seed ^ n_bytes) << 64 };
+	uint64_t enh_hi, enh_lo;
 
 	{
 		uint64_t x, y;
@@ -806,12 +797,13 @@ umash_medium(const uint64_t multipliers[static 2], const uint64_t *oh, uint64_t 
 		x += oh[0];
 		y += oh[1];
 
-		acc.h += (__uint128_t)x * y;
+		mul128(x, y, &enh_hi, &enh_lo);
+		enh_hi += seed ^ n_bytes;
 	}
 
-	acc.u64[1] ^= acc.u64[0];
+	enh_hi ^= enh_lo;
 	return finalize(horner_double_update(
-	    /*acc=*/0, multipliers[0], multipliers[1], acc.u64[0], acc.u64[1]));
+	    /*acc=*/0, multipliers[0], multipliers[1], enh_lo, enh_hi));
 }
 
 static FN struct umash_fp
@@ -820,10 +812,7 @@ umash_fp_medium(const uint64_t multipliers[static 2][2], const uint64_t *oh,
 {
 	struct umash_fp ret;
 	const uint64_t offset = seed ^ n_bytes;
-	union {
-		__uint128_t h;
-		uint64_t u64[2];
-	} hash;
+	uint64_t enh_hi, enh_lo;
 	union {
 		v128 v;
 		uint64_t u64[2];
@@ -843,18 +832,18 @@ umash_fp_medium(const uint64_t multipliers[static 2][2], const uint64_t *oh,
 	lrc[1] ^= y ^ b;
 	mixed_lrc.v = v128_clmul(lrc[0], lrc[1]);
 
-	hash.h = (__uint128_t)offset << 64;
 	a += x;
 	b += y;
-	hash.h += (__uint128_t)a * b;
-	hash.u64[1] ^= hash.u64[0];
+
+	mul128(a, b, &enh_hi, &enh_lo);
+	enh_hi += offset;
+	enh_hi ^= enh_lo;
 
 	ret.hash[0] = finalize(horner_double_update(
-	    /*acc=*/0, multipliers[0][0], multipliers[0][1], hash.u64[0], hash.u64[1]));
+	    /*acc=*/0, multipliers[0][0], multipliers[0][1], enh_lo, enh_hi));
 
-	ret.hash[1] =
-	    finalize(horner_double_update(/*acc=*/0, multipliers[1][0], multipliers[1][1],
-		hash.u64[0] ^ mixed_lrc.u64[0], hash.u64[1] ^ mixed_lrc.u64[1]));
+	ret.hash[1] = finalize(horner_double_update(/*acc=*/0, multipliers[1][0],
+	    multipliers[1][1], enh_lo ^ mixed_lrc.u64[0], enh_hi ^ mixed_lrc.u64[1]));
 
 	return ret;
 }
@@ -865,10 +854,37 @@ umash_long(const uint64_t multipliers[static 2], const uint64_t *oh, uint64_t se
 {
 	uint64_t acc = 0;
 
+	/*
+	 * umash_long.inc defines this variable when the long input
+	 * routine is enabled.
+	 */
+#ifdef UMASH_MULTIPLE_BLOCKS_THRESHOLD
+	if (UNLIKELY(n_bytes >= UMASH_MULTIPLE_BLOCKS_THRESHOLD)) {
+		size_t n_block = n_bytes / BLOCK_SIZE;
+		const void *remaining;
+
+		n_bytes %= BLOCK_SIZE;
+		remaining = (const char *)data + (n_block * BLOCK_SIZE);
+		acc = umash_multiple_blocks(acc, multipliers, oh, seed, data, n_block);
+
+		data = remaining;
+		if (n_bytes == 0)
+			goto finalize;
+
+		goto last_block;
+	}
+#else
+	/* Avoid warnings about the unused labels. */
+	if (0) {
+		goto last_block;
+		goto finalize;
+	}
+#endif
+
 	while (n_bytes > BLOCK_SIZE) {
 		struct umash_oh compressed;
 
-		compressed = oh_one_block(oh, seed, data);
+		compressed = oh_varblock(oh, seed, data, BLOCK_SIZE);
 		data = (const char *)data + BLOCK_SIZE;
 		n_bytes -= BLOCK_SIZE;
 
@@ -876,20 +892,22 @@ umash_long(const uint64_t multipliers[static 2], const uint64_t *oh, uint64_t se
 		    compressed.bits[0], compressed.bits[1]);
 	}
 
+last_block:
 	/* Do the final block. */
 	{
 		struct umash_oh compressed;
 
 		seed ^= (uint8_t)n_bytes;
-		compressed = oh_last_block(oh, seed, data, n_bytes);
+		compressed = oh_varblock(oh, seed, data, n_bytes);
 		acc = horner_double_update(acc, multipliers[0], multipliers[1],
 		    compressed.bits[0], compressed.bits[1]);
 	}
 
+finalize:
 	return finalize(acc);
 }
 
-static FN struct umash_fp
+TEST_DEF struct umash_fp
 umash_fp_long(const uint64_t multipliers[static 2][2], const uint64_t *oh, uint64_t seed,
     const void *data, size_t n_bytes)
 {
@@ -897,14 +915,40 @@ umash_fp_long(const uint64_t multipliers[static 2][2], const uint64_t *oh, uint6
 	struct umash_fp ret;
 	uint64_t acc[2] = { 0, 0 };
 
-	while (n_bytes > BLOCK_SIZE) {
-		oh_one_block_fprint(compressed, oh, seed, data);
+#ifdef UMASH_MULTIPLE_BLOCKS_THRESHOLD
+	if (UNLIKELY(n_bytes >= UMASH_MULTIPLE_BLOCKS_THRESHOLD)) {
+		struct umash_fp poly = { .hash = { 0, 0 } };
+		size_t n_block = n_bytes / BLOCK_SIZE;
+		const void *remaining;
 
-#define UPDATE(i)                                                                     \
-	do {                                                                          \
-		acc[i] = horner_double_update(acc[i], multipliers[i][0],              \
-		    multipliers[i][1], compressed[i].bits[0], compressed[i].bits[1]); \
-	} while (0)
+		n_bytes %= BLOCK_SIZE;
+		remaining = (const char *)data + (n_block * BLOCK_SIZE);
+		poly = umash_fprint_multiple_blocks(
+		    poly, multipliers, oh, seed, data, n_block);
+
+		acc[0] = poly.hash[0];
+		acc[1] = poly.hash[1];
+
+		data = remaining;
+		if (n_bytes == 0)
+			goto finalize;
+
+		goto last_block;
+	}
+#else
+	/* Avoid warnings about the unused labels. */
+	if (0) {
+		goto last_block;
+		goto finalize;
+	}
+#endif
+
+	while (n_bytes > BLOCK_SIZE) {
+		oh_varblock_fprint(compressed, oh, seed, data, BLOCK_SIZE);
+
+#define UPDATE(i)                                                                   \
+	acc[i] = horner_double_update(acc[i], multipliers[i][0], multipliers[i][1], \
+	    compressed[i].bits[0], compressed[i].bits[1])
 
 		UPDATE(0);
 		UPDATE(1);
@@ -914,19 +958,22 @@ umash_fp_long(const uint64_t multipliers[static 2][2], const uint64_t *oh, uint6
 		n_bytes -= BLOCK_SIZE;
 	}
 
-	oh_last_block_fprint(compressed, oh, seed ^ (uint8_t)n_bytes, data, n_bytes);
+last_block:
+	oh_varblock_fprint(compressed, oh, seed ^ (uint8_t)n_bytes, data, n_bytes);
 
 #define FINAL(i)                                                                      \
 	do {                                                                          \
 		acc[i] = horner_double_update(acc[i], multipliers[i][0],              \
 		    multipliers[i][1], compressed[i].bits[0], compressed[i].bits[1]); \
-		ret.hash[i] = finalize(acc[i]);                                       \
 	} while (0)
 
 	FINAL(0);
 	FINAL(1);
 #undef FINAL
 
+finalize:
+	ret.hash[0] = finalize(acc[0]);
+	ret.hash[1] = finalize(acc[1]);
 	return ret;
 }
 
@@ -1092,13 +1139,13 @@ sink_consume_buf(
 		memcpy(&sink->oh_twisted.acc, &twisted_acc, sizeof(twisted_acc));
 		memcpy(&sink->oh_twisted.prev, &h, sizeof(h));
 	} else {
-		__uint128_t enh;
 		/* The last chunk is combined with the size tag with ENH. */
 		uint64_t tag = sink->seed ^ (uint8_t)(sink->block_size + sink->bufsz);
+		uint64_t enh_hi, enh_lo;
 
-		enh = (__uint128_t)tag << 64;
-		enh += (__uint128_t)(x + k0) * (y + k1);
-		enh ^= enh << 64;
+		mul128(x + k0, y + k1, &enh_hi, &enh_lo);
+		enh_hi += tag;
+		enh_hi ^= enh_lo;
 
 		if (sink->hash_wanted != 0) {
 			union {
@@ -1125,12 +1172,12 @@ sink_consume_buf(
 
 			oh0 ^= lrc_hash.h[0];
 			oh1 ^= lrc_hash.h[1];
-			sink->oh_twisted.acc.bits[0] = oh0 ^ (uint64_t)enh;
-			sink->oh_twisted.acc.bits[1] = oh1 ^ (uint64_t)(enh >> 64);
+			sink->oh_twisted.acc.bits[0] = oh0 ^ enh_lo;
+			sink->oh_twisted.acc.bits[1] = oh1 ^ enh_hi;
 		}
 
-		sink->oh_acc.bits[0] ^= (uint64_t)enh;
-		sink->oh_acc.bits[1] ^= (uint64_t)(enh >> 64);
+		sink->oh_acc.bits[0] ^= enh_lo;
+		sink->oh_acc.bits[1] ^= enh_hi;
 	}
 
 next:
@@ -1157,11 +1204,46 @@ block_sink_update(struct umash_sink *sink, const void *data, size_t n_bytes)
 {
 	size_t consumed = 0;
 
-	(void)n_bytes;
 	assert(n_bytes >= BLOCK_SIZE);
 	assert(sink->bufsz == 0);
 	assert(sink->block_size == 0);
 	assert(sink->oh_iter == 0);
+
+#ifdef UMASH_MULTIPLE_BLOCKS_THRESHOLD
+	if (UNLIKELY(n_bytes > UMASH_MULTIPLE_BLOCKS_THRESHOLD)) {
+		/*
+		 * We leave the last block (partial or not) for the
+		 * caller: incremental hashing must save some state
+		 * at the end of a block.
+		 */
+		size_t n_blocks = (n_bytes - 1) / BLOCK_SIZE;
+
+		if (sink->hash_wanted != 0) {
+			const uint64_t multipliers[2][2] = {
+				[0][0] = sink->poly_state[0].mul[0],
+				[0][1] = sink->poly_state[0].mul[1],
+				[1][0] = sink->poly_state[1].mul[0],
+				[1][1] = sink->poly_state[1].mul[1],
+			};
+			struct umash_fp poly = {
+				.hash[0] = sink->poly_state[0].acc,
+				.hash[1] = sink->poly_state[1].acc,
+			};
+
+			poly = umash_fprint_multiple_blocks(
+			    poly, multipliers, sink->oh, sink->seed, data, n_blocks);
+
+			sink->poly_state[0].acc = poly.hash[0];
+			sink->poly_state[1].acc = poly.hash[1];
+		} else {
+			sink->poly_state[0].acc = umash_multiple_blocks(
+			    sink->poly_state[0].acc, sink->poly_state[0].mul, sink->oh,
+			    sink->seed, data, n_blocks);
+		}
+
+		return n_blocks * BLOCK_SIZE;
+	}
+#endif
 
 	while (n_bytes > BLOCK_SIZE) {
 		/*
@@ -1171,11 +1253,13 @@ block_sink_update(struct umash_sink *sink, const void *data, size_t n_bytes)
 		if (sink->hash_wanted != 0) {
 			struct umash_oh hashes[2];
 
-			oh_one_block_fprint(hashes, sink->oh, sink->seed, data);
+			oh_varblock_fprint(
+			    hashes, sink->oh, sink->seed, data, BLOCK_SIZE);
 			sink->oh_acc = hashes[0];
 			sink->oh_twisted.acc = hashes[1];
 		} else {
-			sink->oh_acc = oh_one_block(sink->oh, sink->seed, data);
+			sink->oh_acc =
+			    oh_varblock(sink->oh, sink->seed, data, BLOCK_SIZE);
 		}
 
 		sink_update_poly(sink);
@@ -1257,8 +1341,6 @@ umash_full(const struct umash_params *params, uint64_t seed, int which, const vo
     size_t n_bytes)
 {
 
-	which = (which == 0) ? 0 : 1;
-
 	DTRACE_PROBE4(libumash, umash_full, params, which, data, n_bytes);
 
 	/*
@@ -1266,8 +1348,11 @@ umash_full(const struct umash_params *params, uint64_t seed, int which, const vo
 	 * second hash.  We don't currently use that logic, and it's
 	 * about to become a bit more complex, so let's just go for a
 	 * full fingerprint and take what we need.
+	 *
+	 * umash_full is also rarely used that way: usually we want
+	 * either the main hash, or the full fingerprint.
 	 */
-	if (which == 1) {
+	if (UNLIKELY(which != 0)) {
 		struct umash_fp fp;
 
 		fp = umash_fprint(params, seed, data, n_bytes);
