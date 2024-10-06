@@ -9,6 +9,12 @@ categories = ["external-ffi-bindings"]
 repository = "https://github.com/backtrace-labs/umash-sys"
 edition = "2018"
 
+[features]
+default = ["long_input_routines"]
+# Dispatch to micro-architecture specific throughput-optimised code
+# for longer inputs.
+long_input_routines = []
+
 [build-dependencies]
 cc = "1"
 
