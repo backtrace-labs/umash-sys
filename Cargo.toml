@@ -1,5 +1,6 @@
 [package]
 name = "umash-sys"
+# C code from https://github.com/backtrace-labs/umash/commit/7ded190debe664960c6681b02fbfe9d2446121dd
 version = "1.0.0"
 authors = ["Backtrace I/O <team@backtrace.io>"]
 license = "MIT"
