@@ -427,7 +427,7 @@ extern "C" {
     pub fn umash_sink_update(
         arg1: *mut umash_sink,
         data: *const ::std::os::raw::c_void,
-        n_bytes: ::std::os::raw::c_ulong,
+        n_bytes: usize,
     );
 }
 extern "C" {
@@ -444,7 +444,7 @@ extern "C" {
         seed: u64,
         which: ::std::os::raw::c_int,
         data: *const ::std::os::raw::c_void,
-        n_bytes: ::std::os::raw::c_ulong,
+        n_bytes: usize,
     ) -> u64;
 }
 extern "C" {
@@ -457,7 +457,7 @@ extern "C" {
         params: *const umash_params,
         seed: u64,
         data: *const ::std::os::raw::c_void,
-        n_bytes: ::std::os::raw::c_ulong,
+        n_bytes: usize,
     ) -> umash_fp;
 }
 extern "C" {
@@ -490,7 +490,6 @@ extern "C" {
 mod tests {
     use crate::{umash_fp, umash_fprint, umash_full, umash_params, umash_params_derive};
     use std::ffi::CString;
-    use std::os::raw::c_ulong;
     use std::os::raw::c_void;
 
     #[test]
@@ -509,7 +508,7 @@ mod tests {
                 &my_params,
                 seed,
                 input.as_bytes().as_ptr() as *const c_void,
-                input.as_bytes().len() as c_ulong,
+                input.as_bytes().len(),
             )
         };
         assert_eq!(fprint.hash, [0x398c5bb5cc113d03, 0x3a52693519575aba]);
@@ -520,7 +519,7 @@ mod tests {
                 seed,
                 0,
                 input.as_bytes().as_ptr() as *const c_void,
-                input.as_bytes().len() as c_ulong,
+                input.as_bytes().len(),
             )
         };
         assert_eq!(hash0, 0x398c5bb5cc113d03);
@@ -531,7 +530,7 @@ mod tests {
                 seed,
                 1,
                 input.as_bytes().as_ptr() as *const c_void,
-                input.as_bytes().len() as c_ulong,
+                input.as_bytes().len(),
             )
         };
         assert_eq!(hash1, 0x3a52693519575aba);
