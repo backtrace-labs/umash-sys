@@ -22,7 +22,7 @@ fn bindgen_test_layout_umash_params() {
         concat!("Alignment of ", stringify!(umash_params))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_params>())).poly as *const _ as usize },
+        ::std::mem::offset_of!(umash_params, poly),
         0usize,
         concat!(
             "Offset of field: ",
@@ -32,7 +32,7 @@ fn bindgen_test_layout_umash_params() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_params>())).oh as *const _ as usize },
+        ::std::mem::offset_of!(umash_params, oh),
         32usize,
         concat!(
             "Offset of field: ",
@@ -61,7 +61,7 @@ fn bindgen_test_layout_umash_fp() {
         concat!("Alignment of ", stringify!(umash_fp))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_fp>())).hash as *const _ as usize },
+        ::std::mem::offset_of!(umash_fp, hash),
         0usize,
         concat!(
             "Offset of field: ",
@@ -113,7 +113,7 @@ fn bindgen_test_layout_umash_sink__bindgen_ty_1() {
         concat!("Alignment of ", stringify!(umash_sink__bindgen_ty_1))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink__bindgen_ty_1>())).mul as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink__bindgen_ty_1, mul),
         0usize,
         concat!(
             "Offset of field: ",
@@ -123,7 +123,7 @@ fn bindgen_test_layout_umash_sink__bindgen_ty_1() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink__bindgen_ty_1>())).acc as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink__bindgen_ty_1, acc),
         16usize,
         concat!(
             "Offset of field: ",
@@ -151,7 +151,7 @@ fn bindgen_test_layout_umash_sink_umash_oh() {
         concat!("Alignment of ", stringify!(umash_sink_umash_oh))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink_umash_oh>())).bits as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink_umash_oh, bits),
         0usize,
         concat!(
             "Offset of field: ",
@@ -181,7 +181,7 @@ fn bindgen_test_layout_umash_sink_umash_twisted_oh() {
         concat!("Alignment of ", stringify!(umash_sink_umash_twisted_oh))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink_umash_twisted_oh>())).lrc as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink_umash_twisted_oh, lrc),
         0usize,
         concat!(
             "Offset of field: ",
@@ -191,9 +191,7 @@ fn bindgen_test_layout_umash_sink_umash_twisted_oh() {
         )
     );
     assert_eq!(
-        unsafe {
-            &(*(::std::ptr::null::<umash_sink_umash_twisted_oh>())).prev as *const _ as usize
-        },
+        ::std::mem::offset_of!(umash_sink_umash_twisted_oh, prev),
         16usize,
         concat!(
             "Offset of field: ",
@@ -203,7 +201,7 @@ fn bindgen_test_layout_umash_sink_umash_twisted_oh() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink_umash_twisted_oh>())).acc as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink_umash_twisted_oh, acc),
         32usize,
         concat!(
             "Offset of field: ",
@@ -226,7 +224,7 @@ fn bindgen_test_layout_umash_sink() {
         concat!("Alignment of ", stringify!(umash_sink))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).poly_state as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, poly_state),
         0usize,
         concat!(
             "Offset of field: ",
@@ -236,7 +234,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).buf as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, buf),
         48usize,
         concat!(
             "Offset of field: ",
@@ -246,7 +244,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).oh as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, oh),
         80usize,
         concat!(
             "Offset of field: ",
@@ -256,7 +254,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).oh_iter as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, oh_iter),
         88usize,
         concat!(
             "Offset of field: ",
@@ -266,7 +264,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).bufsz as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, bufsz),
         92usize,
         concat!(
             "Offset of field: ",
@@ -276,7 +274,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).block_size as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, block_size),
         93usize,
         concat!(
             "Offset of field: ",
@@ -286,7 +284,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).large_umash as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, large_umash),
         94usize,
         concat!(
             "Offset of field: ",
@@ -296,7 +294,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).hash_wanted as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, hash_wanted),
         95usize,
         concat!(
             "Offset of field: ",
@@ -306,7 +304,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).oh_acc as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, oh_acc),
         96usize,
         concat!(
             "Offset of field: ",
@@ -316,7 +314,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).oh_twisted as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, oh_twisted),
         112usize,
         concat!(
             "Offset of field: ",
@@ -326,7 +324,7 @@ fn bindgen_test_layout_umash_sink() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_sink>())).seed as *const _ as usize },
+        ::std::mem::offset_of!(umash_sink, seed),
         160usize,
         concat!(
             "Offset of field: ",
@@ -357,7 +355,7 @@ fn bindgen_test_layout_umash_state() {
         concat!("Alignment of ", stringify!(umash_state))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_state>())).sink as *const _ as usize },
+        ::std::mem::offset_of!(umash_state, sink),
         0usize,
         concat!(
             "Offset of field: ",
@@ -387,7 +385,7 @@ fn bindgen_test_layout_umash_fp_state() {
         concat!("Alignment of ", stringify!(umash_fp_state))
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<umash_fp_state>())).sink as *const _ as usize },
+        ::std::mem::offset_of!(umash_fp_state, sink),
         0usize,
         concat!(
             "Offset of field: ",
